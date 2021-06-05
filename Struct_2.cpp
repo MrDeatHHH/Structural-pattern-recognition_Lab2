@@ -768,7 +768,7 @@ int* iterations(const int first_iter, const int iter,
 int main()
 {
 	Mat image_, image[channels];
-	image_ = imread("4.jpg", IMREAD_UNCHANGED);
+	image_ = imread("6.jpg", IMREAD_UNCHANGED);
 	split(image_, image);
 
 	auto start = high_resolution_clock::now();
