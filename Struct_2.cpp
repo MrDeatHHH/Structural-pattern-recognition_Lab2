@@ -15,18 +15,19 @@ const int modNt = 4;
 const double infinity = 10000000000;
 const int colors_draw[modK + 1][3] = { {0, 0, 0}, {0, 255, 0}, {0, 0, 255}, {255, 0, 0} };
 
+const double color_scale = 1. / 100.;
 const double weight = 1.25;
-const int first_iter = 500;
-const int iter = 100;
-const double accuracy = 0.1;
-const double epsilon = 10;
+const int first_iter = 2000;
+const int iter = 200;
+const double accuracy = 0.0001;
+const double epsilon = 0.01;
 const double perc_h = 0.2;
 const double perc_w = 1.;
 
 double* calculate_mu(const int height_start, const int height_finish,
 	const int width_left, const int width_right,
 	const int height, const int width,
-	double* colors, const int amount)
+	int* colors, const int amount)
 {
 	// Initialize result
 	double* result = new double[3]();
@@ -43,7 +44,7 @@ double* calculate_mu(const int height_start, const int height_finish,
 		{
 			const int y_ = y * 3;
 			for (int c = 0; c < 3; ++c)
-				result[c] += double(colors[x_ + y_ + c]);
+				result[c] += double(colors[x_ + y_ + c]) * color_scale;
 		}
 	}
 
@@ -57,7 +58,7 @@ double* calculate_mu(const int height_start, const int height_finish,
 double* calculate_ep(const int height_start, const int height_finish,
 	const int width_left, const int width_right,
 	const int height, const int width,
-	double* colors, const int amount, double* mu)
+	int* colors, const int amount, double* mu)
 {
 	// Initialize result
 	double* result = new double[3 * 3]();
@@ -77,7 +78,7 @@ double* calculate_ep(const int height_start, const int height_finish,
 			for (int c1 = 0; c1 < 3; ++c1)
 				for (int c2 = 0; c2 < 3; ++c2)
 					// TODO: check if this is correct
-					result[c1 * 3 + c2] += double(colors[x_ + y_ + c1] - mu[c1]) * double(colors[x_ + y_ + c2] - mu[c2]);
+					result[c1 * 3 + c2] += double(colors[x_ + y_ + c1] * color_scale - mu[c1]) * double(colors[x_ + y_ + c2] * color_scale - mu[c2]);
 		}
 	}
 
@@ -90,7 +91,7 @@ double* calculate_ep(const int height_start, const int height_finish,
 }
 
 void get_distributions(double* mus, double* eps,
-	const int height, const int width, double* colors)
+	const int height, const int width, int* colors)
 {
 	// Pictures (0, 0) is in the top left corner
 	const int height_down = int(height * (1 - perc_h));
@@ -151,12 +152,12 @@ double* mat_mult(double* x, double** a)
 }
 
 // q function
-double q(double* x, double* mus, double* eps, const int t, const int k)
+double q_func(int x[3], double* mus, double* eps, const int k)
 {
 	// TODO: check if this is correct
 	double* x_ = new double[3];
 	for (int c = 0; c < 3; ++c)
-		x_[c] = x[t * 3 + c] - mus[k * 3 + c];
+		x_[c] = x[c] - mus[k * 3 + c];
 	
 	double** ep = new double* [3];
 	for (int c = 0; c < 3; ++c)
@@ -318,7 +319,20 @@ int find(int* arr, const int start, const int length, const int t)
 	return -1;
 }
 
-void diffusion(const int iter, double* mus, double* eps, int* nt, int* tau, double* phi, const int width, const int height, double* colors)
+inline int get_g_ind(const int t, const int t__, const int height)
+{
+	return 2 * (abs(t - t__) == height) + (t__ > t);
+}
+
+inline int get_q_ind(const int t, int* colors)
+{
+	return ((colors[t * 3] * 256 + colors[t * 3 + 1]) * 256 + colors[t * 3 + 2]) * modK;
+}
+
+void diffusion(const int iter, double* mus, double* eps,
+	int* nt, int* tau,
+	double* phi, const int width, const int height,
+	int* colors, double* g, double* q)
 {
 	const int modT = width * height;
 	for (int it = 0; it < iter; ++it)
@@ -338,7 +352,7 @@ void diffusion(const int iter, double* mus, double* eps, int* nt, int* tau, doub
 					double sum_best = -infinity * 100.;
 					for (int c_ = 0; c_ < modK; ++c_)
 					{
-						double sum = g_plus(t / height, t % height, t__ / height, t__ % height, c, c_) -
+						double sum = g[get_g_ind(t, t__, height) * modK * modK + c * modK + c_] -
 							phi[_t + t_ * modK + c] -
 							phi[t__ * modNt * modK + find(tau, t__ * modNt, nt[t__], t) * modK + c_];
 						if (sum > sum_best)
@@ -356,21 +370,18 @@ void diffusion(const int iter, double* mus, double* eps, int* nt, int* tau, doub
 				for (int t_ = 0; t_ < nt[t]; ++t_)
 				{
 					int t__ = tau[t * modNt + t_];
-					Con += g_plus(t / height, t % height, t__ / height, t__ % height, c, k_star[t_]) -
+					Con += g[get_g_ind(t, t__, height) * modK * modK + c * modK + k_star[t_]] -
 						phi[t__ * modNt * modK + find(tau, t__ * modNt, nt[t__], t) * modK + k_star[t_]];
 				}
 
-				//cout << q(colors[t / height][t % height], mus[c], eps[c]) << endl;
-
-				Con += q(colors, mus, eps, t, c);
-
+				Con += q[get_q_ind(t, colors) +  c];
 				Con /= double(nt[t]);
 
 				// Updating phi
 				for (int t_ = 0; t_ < nt[t]; ++t_)
 				{
 					int t__ = tau[t * modNt + t_];
-					phi[_t + t_ * modK + c] = g_plus(t / height, t % height, t__ / height, t__ % height, c, k_star[t_]) -
+					phi[_t + t_ * modK + c] = g[get_g_ind(t, t__, height) * modK * modK + c * modK + k_star[t_]] -
 						phi[t__ * modNt * modK + find(tau, t__ * modNt, nt[t__], t) * modK + k_star[t_]] - Con;
 				}
 
@@ -380,7 +391,7 @@ void diffusion(const int iter, double* mus, double* eps, int* nt, int* tau, doub
 	}
 }
 
-int* get_result(int* nt, int* tau, double* phi, const int width, const int height)
+int* get_result(int* nt, int* tau, double* phi, const int width, const int height, double* g)
 {
 	const int modT = width * height;
 	int* result = new int[modT];
@@ -398,7 +409,7 @@ int* get_result(int* nt, int* tau, double* phi, const int width, const int heigh
 			double sum__best = -infinity * 100;
 			for (int c_ = 0; c_ < modK; ++c_)
 			{
-				double sum = g_plus(t / height, t % height, t__ / height, t__ % height, c, c_) -
+				double sum = g[get_g_ind(t, t__, height) * modK * modK + c * modK + c_] -
 					phi[_t + c] -
 					phi[t__ * modNt * modK + find(tau, t__ * modNt, nt[t__], t) * modK + c_];
 				if (sum > sum__best)
@@ -420,7 +431,7 @@ int* get_result(int* nt, int* tau, double* phi, const int width, const int heigh
 	return result;
 }
 
-void get_or_and_problem(bool*& gs, bool*& qs, int* nt, int* tau, double* phi, const int width, const int height, double* mus, double* eps, double* colors, double epsilon)
+void get_or_and_problem(bool*& gs, bool*& qs, int* nt, int* tau, double* phi, const int width, const int height, double* mus, double* eps, int* colors, double epsilon, double* g, double* q)
 {
 	// Inititalize needed variable
 	const int modT = width * height;
@@ -440,7 +451,7 @@ void get_or_and_problem(bool*& gs, bool*& qs, int* nt, int* tau, double* phi, co
 		for (int c = 0; c < modK; ++c)
 		{
 			// Calculating current q
-			current_q[c] = q(colors, mus, eps, t, c);
+			current_q[c] = q[get_q_ind(t, colors) + c];
 			for (int t_ = 0; t_ < nt[t]; ++t_)
 				current_q[c] += phi[_t + t_* modK + c];
 
@@ -474,7 +485,7 @@ void get_or_and_problem(bool*& gs, bool*& qs, int* nt, int* tau, double* phi, co
 				for (int c_ = 0; c_ < modK; ++c_)
 				{
 					// Calculating current g
-					current_g[t_][c * modK + c_] = g_plus(t / height, t % height, t__ / height, t__ % height, c, c_) -
+					current_g[t_][c * modK + c_] = g[get_g_ind(t, t__, height) * modK * modK + c * modK + c_] -
 						phi[_t + t_ * modK + c] -
 						phi[t__ * modNt * modK + find(tau, t__ * modNt, nt[t__], t) * modK + c_];
 
@@ -672,7 +683,8 @@ int* iterations(const int first_iter, const int iter,
 	double* mus, double* eps,
 	int* nt, int* tau,
 	const int width, const int height,
-	double* colors)
+	int* colors,
+	double* g, double* q)
 {
 	double prev_epsilon = 2 * epsilon;
 	double current_epsilon = epsilon;
@@ -690,7 +702,7 @@ int* iterations(const int first_iter, const int iter,
 	double* phi = new double[modT * modNt * modK]();
 
 	// First Diffusion
-	diffusion(first_iter, mus, eps, nt, tau, phi, width, height, colors);
+	diffusion(first_iter, mus, eps, nt, tau, phi, width, height, colors, g, q);
 
 	while (!stop)
 	{
@@ -698,7 +710,7 @@ int* iterations(const int first_iter, const int iter,
 		// Get or and problem
 		bool* gs;
 		bool* qs;
-		get_or_and_problem(gs, qs, nt, tau, phi, width, height, mus, eps, colors, current_epsilon);
+		get_or_and_problem(gs, qs, nt, tau, phi, width, height, mus, eps, colors, current_epsilon, g, q);
 
 		// Use crossing
 		cross(gs, qs, nt, tau, width, height);
@@ -740,7 +752,7 @@ int* iterations(const int first_iter, const int iter,
 		}
 		else
 		{
-			diffusion(iter, mus, eps, nt, tau, phi, width, height, colors);
+			diffusion(iter, mus, eps, nt, tau, phi, width, height, colors, g, q);
 		}
 
 		delete[] qs;
@@ -764,7 +776,7 @@ int main()
 	const int width = image[0].size().width;
 
 	// Get array from Mat
-	double* colors = new double[width * height * 3];
+	int* colors = new int[width * height * 3];
 	for (int x = 0; x < width; ++x)
 	{
 		const int x_ = x * height * 3;
@@ -772,7 +784,7 @@ int main()
 		{
 			const int y_ = y * 3;
 			for (int c = 0; c < 3; ++c)
-				colors[x_ + y_ + c] = double(image[c].at<uchar>(y, x)) / 100.;
+				colors[x_ + y_ + c] = int(image[c].at<uchar>(y, x));
 		}
 	}
 
@@ -795,6 +807,43 @@ int main()
 
 	std::cout << endl;
 
+	cout << "Precalculating g" << endl;
+	// Initialize q and g
+	double* g = new double[modNt * modK * modK];
+
+	for (int c = 0; c << modK; ++c)
+		for (int c_ = 0; c_ << modK; ++c_)
+			g[0 * modK * modK + c * modK + c_] = g_plus(1, 1, 1, 0, c, c_);
+
+	for (int c = 0; c << modK; ++c)
+		for (int c_ = 0; c_ << modK; ++c_)
+			g[1 * modK * modK + c * modK + c_] = g_plus(1, 1, 1, 2, c, c_);
+
+	for (int c = 0; c << modK; ++c)
+		for (int c_ = 0; c_ << modK; ++c_)
+			g[2 * modK * modK + c * modK + c_] = g_plus(1, 1, 0, 1, c, c_);
+
+	for (int c = 0; c << modK; ++c)
+		for (int c_ = 0; c_ << modK; ++c_)
+			g[3 * modK * modK + c * modK + c_] = g_plus(1, 1, 2, 1, c, c_);
+	cout << "Done" << endl;
+
+	cout << "Precalculating q" << endl;
+
+	double* q = new double[256 * 256 * 256 * modK];
+	for (int c1 = 0; c1 < 256; ++c1)
+	{
+		cout << c1 << " / " << 256 << endl;
+		for (int c2 = 0; c2 < 256; ++c2)
+			for (int c3 = 0; c3 < 256; ++c3)
+				for (int c = 0; c < modK; ++c)
+				{
+					int x[3] = { c1, c2, c3 };
+					q[c1 * 256 * 256 * modK + c2 * 256 * modK + c3 * modK + c] = q_func(x, mus, eps, c);
+				}
+	}
+	cout << "Done" << endl;
+
 	// Create neighbour structure
 	const int modT = width * height;
 	int* tau = new int[modT * modNt];
@@ -805,7 +854,7 @@ int main()
 			get_neighbors_plus(nt[x * height + y], tau, x, y, width, height);
 	}
 
-	int* res = iterations(first_iter, iter, accuracy, epsilon, mus, eps, nt, tau, width, height, colors);
+	int* res = iterations(first_iter, iter, accuracy, epsilon, mus, eps, nt, tau, width, height, colors, g, q);
 
 	// Measuring time taken
 	auto stop = high_resolution_clock::now();
