@@ -10,18 +10,32 @@ using namespace cv;
 using namespace std;
 using namespace std::chrono;
 
+// Dont touch these
 const int modK = 3;
 const int modNt = 4;
 const double infinity = 10000000000;
 const int colors_draw[modK + 1][3] = { {0, 0, 0}, {0, 255, 0}, {0, 0, 255}, {255, 0, 0} };
 
+// Better dont touch these
 const double color_scale = 1. / 100.;
 const double weight = 1.25;
-const int first_iter = 2000;
-const int iter = 200;
+
+// Actual params, which can be changed
+const int first_iter = 300;
+const int iter = 50;
+const double epsilon = 0.1;
+// Iterations will stop when prev epsilon and cur epsilon wont differ more then on this value
 const double accuracy = 0.0001;
-const double epsilon = 0.01;
-const double perc_h = 0.2;
+
+// Set hack_value to zero if u are not hacker
+// Empirical rule: if current epsilon is close to zero
+// That means that diffusion made all (or almost all) max arcs equal
+// Which means that we can get solution from the updated weights of diffusion
+// So instead of finding markup which epsilon close to best we can find best itself
+const double hack_value = 0.005;
+
+// Percentages of image taken for calculating distribution
+const double perc_h = 0.3;
 const double perc_w = 1.;
 
 double* calculate_mu(const int height_start, const int height_finish,
@@ -157,8 +171,8 @@ double q_func(int x[3], double* mus, double* eps, const int k)
 	// TODO: check if this is correct
 	double* x_ = new double[3];
 	for (int c = 0; c < 3; ++c)
-		x_[c] = x[c] - mus[k * 3 + c];
-	
+		x_[c] = x[c] * color_scale - mus[k * 3 + c];
+
 	double** ep = new double* [3];
 	for (int c = 0; c < 3; ++c)
 		ep[c] = new double[3];
@@ -242,7 +256,7 @@ double g_plus(const int x1, const int y1, const int x2, const int y2, const int 
 			return -weight;
 	}
 
-	std::cout << "Something is wrong... I can feel it" << endl;
+	cout << "Something is wrong... I can feel it" << endl;
 	return -infinity;
 }
 
@@ -315,7 +329,7 @@ int find(int* arr, const int start, const int length, const int t)
 		if (arr[start + i] == t)
 			return i;
 
-	std::cout << "Something is wrong... I can feel it" << endl;
+	cout << "Something is wrong... I can feel it" << endl;
 	return -1;
 }
 
@@ -337,7 +351,7 @@ void diffusion(const int iter, double* mus, double* eps,
 	const int modT = width * height;
 	for (int it = 0; it < iter; ++it)
 	{
-		std::cout << "Diffusion --- " << it << " / " << iter << endl;
+		cout << "Diffusion --- " << it << " / " << iter << endl;
 		for (int t = 0; t < modT; ++t)
 		{
 			const int _t = t * modNt * modK;
@@ -374,7 +388,7 @@ void diffusion(const int iter, double* mus, double* eps,
 						phi[t__ * modNt * modK + find(tau, t__ * modNt, nt[t__], t) * modK + k_star[t_]];
 				}
 
-				Con += q[get_q_ind(t, colors) +  c];
+				Con += q[get_q_ind(t, colors) + c];
 				Con /= double(nt[t]);
 
 				// Updating phi
@@ -453,7 +467,7 @@ void get_or_and_problem(bool*& gs, bool*& qs, int* nt, int* tau, double* phi, co
 			// Calculating current q
 			current_q[c] = q[get_q_ind(t, colors) + c];
 			for (int t_ = 0; t_ < nt[t]; ++t_)
-				current_q[c] += phi[_t + t_* modK + c];
+				current_q[c] += phi[_t + t_ * modK + c];
 
 			// Comparing to max
 			if (current_q[c] > max)
@@ -597,37 +611,50 @@ bool self_control(int* answer, bool* gs, bool* qs, int* nt, int* tau, const int 
 		bool* qs_ = new bool[size_qs];
 		bool* gs_ = new bool[size_gs];
 
+		double counter_copy = 0;
+		double counter_cross = 0;
+		double counter_trash = 0;
+
 		// Start main loop
 		for (int t = 0; t < modT; ++t)
 		{
 			if (t % 100 == 0)
-				std::cout << "Self control --- " << t << " / " << modT << endl;
+				cout << "Self control --- " << t << " / " << modT << endl;
 			result = false;
 			for (int c = 0; c < modK; ++c)
 			{
 				// If qs[t][k] is true then check if there is a markup after cross
 				if (qs[t * modK + c])
 				{
+					auto mark = high_resolution_clock::now();
 					std::copy(qs, qs + size_qs, qs_);
 					std::copy(gs, gs + size_gs, gs_);
+					counter_copy += (double(duration_cast<microseconds>(high_resolution_clock::now() - mark).count()) / 1000000.);
 
+					mark = high_resolution_clock::now();
 					// Making other qs equal to false
 					for (int c_ = 0; c_ < modK; ++c_)
 						if (c != c_)
 							qs_[t * modK + c_] = false;
+					counter_trash += (double(duration_cast<microseconds>(high_resolution_clock::now() - mark).count()) / 1000000.);
 
+					mark = high_resolution_clock::now();
 					// Using cross
 					cross(gs_, qs_, nt, tau, width, height);
+					counter_cross += (double(duration_cast<microseconds>(high_resolution_clock::now() - mark).count()) / 1000000.);
 
 					// Checking if there is markup
 					if (f(qs_))
 					{
+						mark = high_resolution_clock::now();
 						result = true;
 						answer[t] = c;
 						for (int c_ = 0; c_ < modK; ++c_)
 							qs[t * modK + c_] = (c == c_);
+						counter_trash += (double(duration_cast<microseconds>(high_resolution_clock::now() - mark).count()) / 1000000.);
 						break;
 					}
+
 				}
 			}
 
@@ -639,6 +666,12 @@ bool self_control(int* answer, bool* gs, bool* qs, int* nt, int* tau, const int 
 		// Delete qs_ and gs_
 		delete[] qs_;
 		delete[] gs_;
+
+		double sum_time = counter_trash + counter_cross + counter_copy;
+		cout << "Time used for trash: " << counter_trash / sum_time << endl;
+		cout << "Time used for cross: " << counter_cross / sum_time << endl;
+		cout << "Time used for copy: " << counter_copy / sum_time << endl;
+		cout << "Time used for self control: " << sum_time << endl;
 
 		return result;
 	}
@@ -706,7 +739,7 @@ int* iterations(const int first_iter, const int iter,
 
 	while (!stop)
 	{
-		std::cout << prev_epsilon << " - " << current_epsilon << " <> " << accuracy << endl;
+		cout << prev_epsilon << " - " << current_epsilon << " <> " << accuracy << endl;
 		// Get or and problem
 		bool* gs;
 		bool* qs;
@@ -718,12 +751,21 @@ int* iterations(const int first_iter, const int iter,
 		bool check;
 		bool have_result = false;
 
+		if (current_epsilon < 0.01 && hack_value == 0.)
+			cout << "Consider using hacks" << endl;
+
 		if ((prev_epsilon - current_epsilon) < 2 * accuracy)
 		{
 			check = f(qs);
 			if (check)
 			{
-				check = self_control(current_res, gs, qs, nt, tau, width, height);
+				if (current_epsilon > hack_value)
+					check = self_control(current_res, gs, qs, nt, tau, width, height);
+				else
+				{
+					check = f(qs);
+					current_res = get_result(nt, tau, phi, width, height, g);
+				}
 				have_result = true;
 			}
 		}
@@ -767,7 +809,7 @@ int* iterations(const int first_iter, const int iter,
 int main()
 {
 	Mat image_, image[3];
-	image_ = imread("7.jpg", IMREAD_UNCHANGED);
+	image_ = imread("2.jpg", IMREAD_UNCHANGED);
 	split(image_, image);
 
 	auto start = high_resolution_clock::now();
@@ -798,33 +840,48 @@ int main()
 	get_distributions(mus, eps, height, width, colors);
 
 	for (int i = 0; i < 3; ++i)
-		std::cout << mus[i] << " " << endl;
-
-	std::cout << endl;
+		cout << mus[i] << " " << endl;
+	cout << endl;
 
 	for (int i = 0; i < 3; ++i)
-		std::cout << mus[6 + i] << " " << endl;
+		cout << mus[6 + i] << " " << endl;
+	cout << endl;
 
-	std::cout << endl;
+	for (int i = 0; i < 3; ++i)
+	{
+		for (int j = 0; j < 3; ++j)
+			cout << eps[i * 3 + j] << " ";
+		cout << endl;
+	}
+	cout << endl;
+
+
+	for (int i = 0; i < 3; ++i)
+	{
+		for (int j = 0; j < 3; ++j)
+			cout << eps[18 + i * 3 + j] << " ";
+		cout << endl;
+	}
+	cout << endl;
 
 	cout << "Precalculating g" << endl;
 	// Initialize q and g
 	double* g = new double[modNt * modK * modK];
 
-	for (int c = 0; c << modK; ++c)
-		for (int c_ = 0; c_ << modK; ++c_)
+	for (int c = 0; c < modK; ++c)
+		for (int c_ = 0; c_ < modK; ++c_)
 			g[0 * modK * modK + c * modK + c_] = g_plus(1, 1, 1, 0, c, c_);
 
-	for (int c = 0; c << modK; ++c)
-		for (int c_ = 0; c_ << modK; ++c_)
+	for (int c = 0; c < modK; ++c)
+		for (int c_ = 0; c_ < modK; ++c_)
 			g[1 * modK * modK + c * modK + c_] = g_plus(1, 1, 1, 2, c, c_);
 
-	for (int c = 0; c << modK; ++c)
-		for (int c_ = 0; c_ << modK; ++c_)
+	for (int c = 0; c < modK; ++c)
+		for (int c_ = 0; c_ < modK; ++c_)
 			g[2 * modK * modK + c * modK + c_] = g_plus(1, 1, 0, 1, c, c_);
 
-	for (int c = 0; c << modK; ++c)
-		for (int c_ = 0; c_ << modK; ++c_)
+	for (int c = 0; c < modK; ++c)
+		for (int c_ = 0; c_ < modK; ++c_)
 			g[3 * modK * modK + c * modK + c_] = g_plus(1, 1, 2, 1, c, c_);
 	cout << "Done" << endl;
 
@@ -859,7 +916,7 @@ int main()
 	// Measuring time taken
 	auto stop = high_resolution_clock::now();
 	auto duration = duration_cast<microseconds>(stop - start);
-	std::cout << "Time used: " << double(duration.count()) / 1000000. << endl;
+	cout << "Time used: " << double(duration.count()) / 1000000. << endl;
 
 	if (res[0] != -1)
 	{
@@ -867,8 +924,8 @@ int main()
 	}
 	else
 	{
-		std::cout << "Bad params" << endl;
-		std::cout << "Try to change epsilon and/or accuracy" << endl;
+		cout << "Bad params" << endl;
+		cout << "Try to change epsilon and/or accuracy" << endl;
 	}
 
 	waitKey(0);
