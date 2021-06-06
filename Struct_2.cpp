@@ -21,18 +21,20 @@ const double color_scale = 1. / 100.;
 const double weight = 1.25;
 
 // Actual params, which can be changed
-const int first_iter = 300;
-const int iter = 50;
-const double epsilon = 0.1;
+// Better start with epsilon around 10
+// And give at least 500 first iterations
+const int first_iter = 500;
+const int iter = 100;
+const double epsilon = 10;
 // Iterations will stop when prev epsilon and cur epsilon wont differ more then on this value
-const double accuracy = 0.0001;
+const double accuracy = 0.01;
 
 // Set hack_value to zero if u are not hacker
 // Empirical rule: if current epsilon is close to zero
 // That means that diffusion made all (or almost all) max arcs equal
 // Which means that we can get solution from the updated weights of diffusion
 // So instead of finding markup which epsilon close to best we can find best itself
-const double hack_value = 0.005;
+const double hack_value = 0.;
 
 // Percentages of image taken for calculating distribution
 const double perc_h = 0.3;
@@ -801,6 +803,17 @@ int* iterations(const int first_iter, const int iter,
 		delete[] gs;
 	}
 
+	if (last_res[0] == -1)
+	{
+		bool ok = true;
+		for (int i = 0; i < modT; ++i)
+			ok = ok && (current_res[i] != -1);
+
+		if (ok)
+			for (int i = 0; i < modT; ++i)
+				last_res[i] = current_res[i];
+	}
+
 	delete[] current_res;
 
 	return last_res;
@@ -809,7 +822,7 @@ int* iterations(const int first_iter, const int iter,
 int main()
 {
 	Mat image_, image[3];
-	image_ = imread("2.jpg", IMREAD_UNCHANGED);
+	image_ = imread("5.jpg", IMREAD_UNCHANGED);
 	split(image_, image);
 
 	auto start = high_resolution_clock::now();
@@ -864,6 +877,7 @@ int main()
 	}
 	cout << endl;
 
+	auto mark = high_resolution_clock::now();
 	cout << "Precalculating g" << endl;
 	// Initialize q and g
 	double* g = new double[modNt * modK * modK];
@@ -884,22 +898,20 @@ int main()
 		for (int c_ = 0; c_ < modK; ++c_)
 			g[3 * modK * modK + c * modK + c_] = g_plus(1, 1, 2, 1, c, c_);
 	cout << "Done" << endl;
+	cout << "Time used: " << double(duration_cast<microseconds>(high_resolution_clock::now() - mark).count()) / 1000000. << endl;
 
+	mark = high_resolution_clock::now();
 	cout << "Precalculating q" << endl;
-
-	double* q = new double[256 * 256 * 256 * modK];
-	for (int c1 = 0; c1 < 256; ++c1)
+	double* q = new double[256 * 256 * 256 * modK]();
+	for (int t = 0; t < height * width; ++t)
 	{
-		cout << c1 << " / " << 256 << endl;
-		for (int c2 = 0; c2 < 256; ++c2)
-			for (int c3 = 0; c3 < 256; ++c3)
-				for (int c = 0; c < modK; ++c)
-				{
-					int x[3] = { c1, c2, c3 };
-					q[c1 * 256 * 256 * modK + c2 * 256 * modK + c3 * modK + c] = q_func(x, mus, eps, c);
-				}
+		int x[3] = { colors[t * 3], colors[t * 3 + 1], colors[t * 3 + 2] };
+		const int ind = x[0] * 256 * 256 * modK + x[1] * 256 * modK + x[2] * modK;
+			for (int c = 0; c < modK; ++c)
+				q[ind + c] = q_func(x, mus, eps, c);
 	}
 	cout << "Done" << endl;
+	cout << "Time used: " << double(duration_cast<microseconds>(high_resolution_clock::now() - mark).count()) / 1000000. << endl;
 
 	// Create neighbour structure
 	const int modT = width * height;
