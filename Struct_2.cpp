@@ -23,7 +23,7 @@ const double weight = 1.25;
 // Actual params, which can be changed
 // Better start with epsilon around 10
 // And give at least 500 first iterations
-const int first_iter = 500;
+const int first_iter = 2000;
 const int iter = 100;
 const double epsilon = 10;
 // Iterations will stop when prev epsilon and cur epsilon wont differ more then on this value
@@ -670,9 +670,9 @@ bool self_control(int* answer, bool* gs, bool* qs, int* nt, int* tau, const int 
 		delete[] gs_;
 
 		double sum_time = counter_trash + counter_cross + counter_copy;
-		cout << "Time used for trash: " << counter_trash / sum_time << endl;
-		cout << "Time used for cross: " << counter_cross / sum_time << endl;
-		cout << "Time used for copy: " << counter_copy / sum_time << endl;
+		cout << "Time used for trash: " << counter_trash / sum_time << " %" << endl;
+		cout << "Time used for cross: " << counter_cross / sum_time << " %" << endl;
+		cout << "Time used for copy: " << counter_copy / sum_time << " %" << endl;
 		cout << "Time used for self control: " << sum_time << endl;
 
 		return result;
@@ -822,7 +822,7 @@ int* iterations(const int first_iter, const int iter,
 int main()
 {
 	Mat image_, image[3];
-	image_ = imread("5.jpg", IMREAD_UNCHANGED);
+	image_ = imread("2.jpg", IMREAD_UNCHANGED);
 	split(image_, image);
 
 	auto start = high_resolution_clock::now();
